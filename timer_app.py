@@ -2,6 +2,7 @@
 
 import ctypes
 import math
+import sys
 import time
 import tkinter as tk
 import tkinter.font as tkfont
@@ -85,6 +86,8 @@ MANUAL_RESIZE_BORDER = 9
 
 
 def _load_user32():
+    if sys.platform != "win32":
+        return None
     try:
         user32 = ctypes.windll.user32
         user32.GetAncestor.argtypes = [ctypes.c_void_p, ctypes.c_uint]
@@ -154,6 +157,8 @@ _USER32 = _load_user32()
 
 
 def _load_dwmapi():
+    if sys.platform != "win32":
+        return None
     try:
         dwmapi = ctypes.windll.dwmapi
         dwmapi.DwmSetWindowAttribute.argtypes = [
@@ -1076,17 +1081,29 @@ class CountdownTimer:
             or self.closing
             or self.fullscreen
             or self.fullscreen_transition
-            or _USER32 is None
         ):
             return None
-        try:
-            handle = _native_window_handle(self.root)
-            if _USER32.IsZoomed(handle):
+
+        if _USER32 is not None:
+            try:
+                handle = _native_window_handle(self.root)
+                if _USER32.IsZoomed(handle):
+                    return None
+                self.window_drag_bounds = _native_window_bounds(self.root)
+            except (OSError, tk.TclError):
+                self.window_drag_bounds = None
                 return None
-            self.window_drag_bounds = _native_window_bounds(self.root)
-        except (OSError, tk.TclError):
-            self.window_drag_bounds = None
-            return None
+        else:
+            try:
+                self.window_drag_bounds = (
+                    self.root.winfo_x(),
+                    self.root.winfo_y(),
+                    self.root.winfo_width(),
+                    self.root.winfo_height(),
+                )
+            except tk.TclError:
+                self.window_drag_bounds = None
+                return None
 
         self.window_drag_start = (event.x_root, event.y_root)
         self.window_resize_edge = self._resize_edge_at_pointer(event)
@@ -1099,7 +1116,6 @@ class CountdownTimer:
             or self.closing
             or self.fullscreen
             or self.fullscreen_transition
-            or _USER32 is None
         ):
             return None
 
@@ -1133,25 +1149,32 @@ class CountdownTimer:
             new_left = left + delta_x
             new_top = top + delta_y
 
-        flags = SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_NOACTIVATE
-        if not edge:
-            flags |= SWP_NOSIZE
-            new_width = 0
-            new_height = 0
-        try:
-            if not _USER32.SetWindowPos(
-                _native_window_handle(self.root),
-                None,
-                new_left,
-                new_top,
-                new_width,
-                new_height,
-                flags,
-            ):
-                raise ctypes.WinError()
-        except (OSError, tk.TclError):
-            self._end_window_drag()
-            return None
+        if _USER32 is not None:
+            flags = SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_NOACTIVATE
+            if not edge:
+                flags |= SWP_NOSIZE
+                new_width = 0
+                new_height = 0
+            try:
+                if not _USER32.SetWindowPos(
+                    _native_window_handle(self.root),
+                    None,
+                    new_left,
+                    new_top,
+                    new_width,
+                    new_height,
+                    flags,
+                ):
+                    raise ctypes.WinError()
+            except (OSError, tk.TclError):
+                self._end_window_drag()
+                return None
+        else:
+            try:
+                self.root.geometry(f"{new_width}x{new_height}+{new_left}+{new_top}")
+            except tk.TclError:
+                self._end_window_drag()
+                return None
         return "break"
 
     def _end_window_drag(self, _event=None):
@@ -1512,6 +1535,8 @@ class CountdownTimer:
 
 def enable_windows_dpi_awareness():
     """Use per-monitor DPI coordinates and keep text crisp on Windows."""
+    if sys.platform != "win32":
+        return
     try:
         setter = ctypes.windll.user32.SetProcessDpiAwarenessContext
         setter.argtypes = [ctypes.c_void_p]
